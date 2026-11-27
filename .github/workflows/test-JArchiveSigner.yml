@@ -13,30 +13,37 @@ jobs:
       uses: actions/checkout@v7
        
     - name: Start SignServer Container
-      run: sudo docker run -d -it --rm --name signserver -p 80:8080 -p 443:8443 -e LOG_LEVEL_APP=DEBUG -e ALLOW_ANY=true -v /home/runner/work/signserver-signing-action/signserver-signing-action/testing/DSSRootCA10.cacert.pem:/mnt/external/secrets/tls/cas/ManagementCA.crt -h localhost keyfactor/signserver-ce:7.3.2  
+      run: sudo docker run -d -it --rm --name signserver -p 80:8080 -p 443:8443 -e LOG_LEVEL_APP=DEBUG -e ALLOW_ANY=true -v "$GITHUB_WORKSPACE/testing/DSSRootCA10.cacert.pem:/mnt/external/secrets/tls/cas/ManagementCA.crt" -h localhost keyfactor/signserver-ce:7.3.2  
           
     - name: Wait for Container to deploy
       run: sleep 180s
       shell: bash
 
     - name: Add CryptoTokenP12
+      env:
+        PASSWORD: ${{ secrets.CLIENT_CERT_PWD }}
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PWD }}
       run: |
-          curl --cert-type P12 --cert /home/runner/work/signserver-signing-action/signserver-signing-action/testing/dss10_admin1.p12:foo123 \
-          -d '{"properties": {
+          set -o pipefail
+          jq -n -c '{"properties": {
                 "KEYSTOREPATH": "/opt/signserver/res/test/dss10/dss10_keystore.p12",
                 "IMPLEMENTATION_CLASS": "org.signserver.server.signers.CryptoWorker",
                 "KEYSTORETYPE": "PKCS12",
                 "TYPE": "CRYPTO_WORKER",
                 "CRYPTOTOKEN_IMPLEMENTATION_CLASS": "org.signserver.server.cryptotokens.KeystoreCryptoToken",
-                "KEYSTOREPASSWORD": "foo123",
-                "NAME": "CryptoTokenP12" }}' \
+                "KEYSTOREPASSWORD": $ENV.KEYSTORE_PASSWORD,
+                "NAME": "CryptoTokenP12" }}' |
+          curl --config <(printf -- '--cert "%s:%s"\n' "$GITHUB_WORKSPACE/testing/dss10_admin1.p12" "$PASSWORD") --fail --cert-type P12 \
+          --data-binary @- \
           -H "Content-Type: application/json" \
           -H "X-Keyfactor-Requested-With: 1" https://localhost:443/signserver/rest/v1/workers \
           --insecure 
              
     - name: Add JArchiveSigner
+      env:
+        PASSWORD: ${{ secrets.CLIENT_CERT_PWD }}
       run: |
-          curl --cert-type P12 --cert /home/runner/work/signserver-signing-action/signserver-signing-action/testing/dss10_admin1.p12:foo123 \-d '{"properties": {
+          printf -- '--cert "%s:%s"\n' "$GITHUB_WORKSPACE/testing/dss10_admin1.p12" "$PASSWORD" | curl --config - --fail --cert-type P12 \-d '{"properties": {
                 "DEFAULTKEY": "signer00003",
                 "NAME": "JArchiveSigner",
                 "CRYPTOTOKEN": "CryptoTokenP12",
@@ -54,7 +61,7 @@ jobs:
       uses: ./
       with:
         endpoint: http://localhost:80/signserver
-        file-path: /home/runner/work/signserver-signing-action/signserver-signing-action/testing/HelloJar.jar
+        file-path: ${{ github.workspace }}/testing/HelloJar.jar
         worker-name: JArchiveSigner 
         output-file-name: HelloJar-signed-openssl.jar
         rest: false
@@ -63,7 +70,7 @@ jobs:
       uses: ./
       with:
         endpoint: http://localhost:80/signserver
-        file-path: /home/runner/work/signserver-signing-action/signserver-signing-action/testing/HelloJar.jar
+        file-path: ${{ github.workspace }}/testing/HelloJar.jar
         worker-name: JArchiveSigner 
         output-file-name: HelloJar-signed-rest.jar
 
